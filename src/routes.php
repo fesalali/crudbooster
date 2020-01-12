@@ -1,88 +1,97 @@
 <?php
 
-// Developer Backend Middleware
-Route::group(['middleware' => ['web',\crocodicstudio\crudbooster\middlewares\CBDeveloper::class],
-    'prefix'=>"developer/".getSetting('developer_path'),
-    'namespace' => 'crocodicstudio\crudbooster\controllers'], function () {
-    cb()->routeController("modules", "\crocodicstudio\crudbooster\controllers\DeveloperModulesController");
-    cb()->routeController("menus", "\crocodicstudio\crudbooster\controllers\DeveloperMenusController");
-    cb()->routeController("roles","\crocodicstudio\crudbooster\controllers\DeveloperRolesController");
-    cb()->routeController("users","\crocodicstudio\crudbooster\controllers\DeveloperUsersController");
-    cb()->routeController("plugins","\crocodicstudio\crudbooster\controllers\DeveloperPluginStoreController");
-    cb()->routeController("mail","\crocodicstudio\crudbooster\controllers\DeveloperMailController");
-    cb()->routeController("security","\crocodicstudio\crudbooster\controllers\DeveloperSecurityController");
-    cb()->routeController("themes","\crocodicstudio\crudbooster\controllers\DeveloperThemesController");
-    cb()->routeController("appearance","\crocodicstudio\crudbooster\controllers\DeveloperAppearanceController");
-    cb()->routeController("miscellaneous","\crocodicstudio\crudbooster\controllers\DeveloperMiscellaneousController");
-    cb()->routePost("skip-tutorial","DeveloperDashboardController@postSkipTutorial");
-    cb()->routeGet("/","DeveloperDashboardController@getIndex");
-});
+/* ROUTER FOR API GENERATOR */
+$namespace = '\crocodicstudio\crudbooster\controllers';
 
-// Developer Auth Middleware
-Route::group(['middleware' => ['web'],
-    'prefix'=>"developer/".getSetting('developer_path'),
-    'namespace' => 'crocodicstudio\crudbooster\controllers'], function () {
-    cb()->routePost("login","AdminAuthController@postLoginDeveloper");
-    cb()->routeGet("login","AdminAuthController@getLoginDeveloper");
-    cb()->routeGet("logout","AdminAuthController@getLogoutDeveloper");
-});
+Route::group(['middleware' => ['api', '\crocodicstudio\crudbooster\middlewares\CBAuthAPI'], 'namespace' => 'App\Http\Controllers'], function () {
+    //Router for custom api defeault
 
-// Routing without any middleware
-Route::group(['middleware' => ['web'], 'namespace' => '\crocodicstudio\crudbooster\controllers'], function () {
-    if(getSetting("AUTO_REDIRECT_TO_LOGIN")) {
-        cb()->routeGet("/","AdminAuthController@getRedirectToLogin");
+    $dir = scandir(base_path("app/Http/Controllers"));
+    foreach ($dir as $v) {
+        $v = str_replace('.php', '', $v);
+        $names = array_filter(preg_split('/(?=[A-Z])/', str_replace('Controller', '', $v)));
+        $names = strtolower(implode('_', $names));
+
+        if (substr($names, 0, 4) == 'api_') {
+            $names = str_replace('api_', '', $names);
+            Route::any('api/'.$names, $v.'@execute_api');
+        }
     }
 });
 
-// Routing without any middleware with admin prefix
-Route::group(['middleware' => ['web'], 'prefix' => cb()->getAdminPath(), 'namespace' => 'crocodicstudio\crudbooster\controllers'], function () {
-    cb()->routeGet('logout', "AdminAuthController@getLogout");
-
-    if(!getSetting("DISABLE_LOGIN")) {
-        cb()->routePost('login', "AdminAuthController@postLogin");
-        cb()->routeGet('login', "AdminAuthController@getLogin");
-        cb()->routeGet("login-verification","AdminAuthController@getLoginVerification");
-        cb()->routePost("submit-login-verification","AdminAuthController@postSubmitLoginVerification");
-    }
-
-    if(getSetting("enable_forget")) {
-        cb()->routePost("forget","AdminAuthController@postForget");
-    }
-
-    if(getSetting("enable_register")) {
-        cb()->routePost("register","AdminAuthController@postRegister");
-    }
+/* ROUTER FOR UPLOADS */
+Route::group(['middleware' => ['web'], 'namespace' => $namespace], function () {
+    Route::get('api-documentation', ['uses' => 'ApiCustomController@apiDocumentation', 'as' => 'apiDocumentation']);
+    Route::get('download-documentation-postman', ['uses' => 'ApiCustomController@getDownloadPostman', 'as' => 'downloadDocumentationPostman']);
+    Route::get('uploads/{one?}/{two?}/{three?}/{four?}/{five?}', ['uses' => 'FileController@getPreview', 'as' => 'fileControllerPreview']);
 });
 
-// Routing package controllers
-cb()->routeGroupBackend(function () {
-    cb()->routeController('profile', '\crocodicstudio\crudbooster\controllers\AdminProfileController');
+/* ROUTER FOR WEB */
+Route::group(['middleware' => ['web'], 'prefix' => config('crudbooster.ADMIN_PATH'), 'namespace' => $namespace], function () {
+
+    Route::post('unlock-screen', ['uses' => 'AdminController@postUnlockScreen', 'as' => 'postUnlockScreen']);
+    Route::get('lock-screen', ['uses' => 'AdminController@getLockscreen', 'as' => 'getLockScreen']);
+    Route::post('forgot', ['uses' => 'AdminController@postForgot', 'as' => 'postForgot']);
+    Route::get('forgot', ['uses' => 'AdminController@getForgot', 'as' => 'getForgot']);
+    Route::post('register', ['uses' => 'AdminController@postRegister', 'as' => 'postRegister']);
+    Route::get('register', ['uses' => 'AdminController@getRegister', 'as' => 'getRegister']);
+    Route::get('logout', ['uses' => 'AdminController@getLogout', 'as' => 'getLogout']);
+    Route::post('login', ['uses' => 'AdminController@postLogin', 'as' => 'postLogin']);
+    Route::get('login', ['uses' => 'AdminController@getLogin', 'as' => 'getLogin']);
 });
 
-// Auto Routing for App\Http\Controllers
+// ROUTER FOR OWN CONTROLLER FROM CB
 Route::group([
-    'middleware' => ['web', \crocodicstudio\crudbooster\middlewares\CBBackend::class],
-    'prefix' => cb()->getAdminPath(),
+    'middleware' => ['web', '\crocodicstudio\crudbooster\middlewares\CBBackend'],
+    'prefix' => config('crudbooster.ADMIN_PATH'),
     'namespace' => 'App\Http\Controllers',
+], function () use ($namespace) {
+ 
+    Route::get('/',function () {
+    });
+    try {
+        $moduls = DB::table('cms_moduls')->where('path', '!=', '')->where('controller', '!=', '')
+            ->where('is_protected', 0)->where('deleted_at', null)->get();
+        foreach ($moduls as $v) {
+            CRUDBooster::routeController($v->path, $v->controller);
+        }
+    } catch (Exception $e) {
+
+    }
+});
+
+/* ROUTER FOR BACKEND CRUDBOOSTER */
+Route::group([
+    'middleware' => ['web', '\crocodicstudio\crudbooster\middlewares\CBBackend'],
+    'prefix' => config('crudbooster.ADMIN_PATH'),
+    'namespace' => $namespace,
 ], function () {
 
-    if (Request::is(cb()->getAdminPath())) {
-        if($dashboard = getSetting("dashboard_controller")) {
-            cb()->routeGet("/", $dashboard."@getIndex");
-        }else{
-            cb()->routeGet("/", "\crocodicstudio\crudbooster\controllers\AdminDashboardController@getIndex");
+    /* DO NOT EDIT THESE BELLOW LINES */
+    if (Request::is(config('crudbooster.ADMIN_PATH'))) {
+        $menus = DB::table('cms_menus')->where('is_dashboard', 1)->first();
+        if (! $menus) {
+            CRUDBooster::routeController('/', 'AdminController', $namespace = '\crocodicstudio\crudbooster\controllers');
         }
     }
 
-    $controllers = glob(app_path('Http/Controllers/Admin*Controller.php'));
+    CRUDBooster::routeController('api_generator', 'ApiCustomController', $namespace = '\crocodicstudio\crudbooster\controllers');
 
-    foreach($controllers as $controller) {
-        $controllerName = basename($controller);
-        $controllerName = rtrim($controllerName,".php");
-        $className = '\App\Http\Controllers\\'.$controllerName;
-        $controllerClass = new $className();
-        if(method_exists($controllerClass, 'cbInit')) {
-            cb()->routeController($controllerClass->getData('permalink'), $controllerName);
+    try {
+
+        $master_controller = glob(__DIR__.'/controllers/*.php');
+        foreach ($master_controller as &$m) {
+            $m = str_replace('.php', '', basename($m));
         }
+
+        $moduls = DB::table('cms_moduls')->whereIn('controller', $master_controller)->get();
+
+        foreach ($moduls as $v) {
+            if (@$v->path && @$v->controller) {
+                CRUDBooster::routeController($v->path, $v->controller, $namespace = '\crocodicstudio\crudbooster\controllers');
+            }
+        }
+    } catch (Exception $e) {
+
     }
 });

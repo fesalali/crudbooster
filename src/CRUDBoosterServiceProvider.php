@@ -1,14 +1,10 @@
 <?php namespace crocodicstudio\crudbooster;
 
-use crocodicstudio\crudbooster\commands\DeveloperCommand;
-use crocodicstudio\crudbooster\commands\Generate;
-use crocodicstudio\crudbooster\commands\MigrateData;
-use crocodicstudio\crudbooster\controllers\scaffolding\singletons\ColumnSingleton;
-use crocodicstudio\crudbooster\helpers\MiscellanousSingleton;
 use Illuminate\Support\Facades\Artisan;
-use Illuminate\Support\Facades\Config;
 use Illuminate\Support\ServiceProvider;
-use crocodicstudio\crudbooster\commands\Install;
+use crocodicstudio\crudbooster\commands\CrudboosterInstallationCommand;
+use crocodicstudio\crudbooster\commands\CrudboosterUpdateCommand;
+use Illuminate\Foundation\AliasLoader;
 use App;
 
 class CRUDBoosterServiceProvider extends ServiceProvider
@@ -21,26 +17,30 @@ class CRUDBoosterServiceProvider extends ServiceProvider
 
     public function boot()
     {        
-
-        // Register views
+                                
         $this->loadViewsFrom(__DIR__.'/views', 'crudbooster');
-        $this->loadViewsFrom(__DIR__.'/types', 'types');
-        $this->loadTranslationsFrom(__DIR__."/localization","cb");
-
-        // Publish the files
-        $this->publishes([__DIR__.'/configs/crudbooster.php' => config_path('crudbooster.php')],'cb_config');
+        $this->publishes([__DIR__.'/configs/crudbooster.php' => config_path('crudbooster.php')],'cb_config');            
+        $this->publishes([__DIR__.'/localization' => resource_path('lang')], 'cb_localization');                 
         $this->publishes([__DIR__.'/database' => base_path('database')],'cb_migration');
-        $this->publishes([__DIR__.'/templates/CBHook.stub'=> app_path('Http/CBHook.php')],'cb_hook');
-        $this->publishes([__DIR__ . '/assets' =>public_path('cb_asset')],'cb_asset');
 
-        // Override Local FileSystem
-        Config::set("filesystems.disks.local.root", cbConfig("LOCAL_FILESYSTEM_PATH", public_path("storage")));
+        $this->publishes([
+            __DIR__.'/userfiles/views/vendor/crudbooster/type_components/readme.txt' => resource_path('views/vendor/crudbooster/type_components/readme.txt'),
+        ],'cb_type_components');
+
+        if(!file_exists(app_path('Http/Controllers/CBHook.php'))) {
+            $this->publishes([__DIR__.'/userfiles/controllers/CBHook.php' => app_path('Http/Controllers/CBHook.php')],'CBHook');
+        }
+
+        if(!file_exists(app_path('Http/Controllers/AdminCmsUsersController.php'))) {
+            $this->publishes([__DIR__.'/userfiles/controllers/AdminCmsUsersController.php' => app_path('Http/Controllers/AdminCmsUsersController.php')],'cb_user_controller');
+        }        
+
+        $this->publishes([
+            __DIR__.'/assets'=>public_path('vendor/crudbooster')
+        ],'cb_asset');  
                     
         require __DIR__.'/validations/validation.php';        
-        require __DIR__.'/routes.php';
-
-        $this->registerTypeRoutes();
-        $this->registerPlugin();
+        require __DIR__.'/routes.php';                        
     }
 
     /**
@@ -50,68 +50,46 @@ class CRUDBoosterServiceProvider extends ServiceProvider
      */
     public function register()
     {                                   
-        require __DIR__.'/helpers/Helper.php';
+        require __DIR__.'/helpers/Helper.php';      
 
-        // Singletons
+        $this->mergeConfigFrom(__DIR__.'/configs/crudbooster.php','crudbooster');        
+        
         $this->app->singleton('crudbooster', function ()
         {
             return true;
         });
 
-        // Column register singleton
-        $this->app->singleton('ColumnSingleton', ColumnSingleton::class);
+        $this->commands([
+            commands\Mailqueues::class            
+        ]);
 
-        // Miscellanous Singleton
-        $this->app->singleton("MiscellanousSingleton", MiscellanousSingleton::class);
+        $this->registerCrudboosterCommand();
 
+        $this->commands('crudboosterinstall');
+        $this->commands('crudboosterupdate');
+        $this->commands(['\crocodicstudio\crudbooster\commands\CrudboosterVersionCommand']);
 
-        // Register Commands
-        if ($this->app->runningInConsole()) {
-            $this->commands([
-                Install::class,
-                Generate::class,
-                DeveloperCommand::class,
-                MigrateData::class
-            ]);
-        }
-
-        // Merging configuration
-        $this->mergeConfigFrom(__DIR__.'/configs/crudbooster.php','crudbooster');
-
-        // Register additional library
+        $this->app->register('Barryvdh\DomPDF\ServiceProvider');
+        $this->app->register('Maatwebsite\Excel\ExcelServiceProvider');
+        $this->app->register('Unisharp\Laravelfilemanager\LaravelFilemanagerServiceProvider');
         $this->app->register('Intervention\Image\ImageServiceProvider');
-    }
 
-    private function registerPlugin()
+        $loader = AliasLoader::getInstance();
+        $loader->alias('PDF', 'Barryvdh\DomPDF\Facade');
+        $loader->alias('Excel', 'Maatwebsite\Excel\Facades\Excel');
+        $loader->alias('Image', 'Intervention\Image\Facades\Image');
+        $loader->alias('CRUDBooster', 'crocodicstudio\crudbooster\helpers\CRUDBooster');
+        $loader->alias('CB', 'crocodicstudio\crudbooster\helpers\CB');
+    }
+   
+    private function registerCrudboosterCommand()
     {
-        if(file_exists(app_path("CBPlugins"))) {
-            $views = scandir(app_path("CBPlugins"));
-            foreach($views as $view) {
-                if($view != "." && $view != "..") {
-                    $basename = basename($view);
-
-                    // register migrations
-                    $this->loadMigrationsFrom(app_path("CBPlugins".DIRECTORY_SEPARATOR.$basename.DIRECTORY_SEPARATOR."Migrations"));
-
-                    // register view
-                    $this->loadViewsFrom(app_path("CBPlugins".DIRECTORY_SEPARATOR.$basename.DIRECTORY_SEPARATOR."Views"),$basename);
-
-                    // register route
-                    require app_path("CBPlugins".DIRECTORY_SEPARATOR.$basename.DIRECTORY_SEPARATOR."Routes".DIRECTORY_SEPARATOR."Route.php");
-                }
-            }
-        } else {
-            mkdir(app_path("CBPlugins"));
-        }
-    }
-
-    private function registerTypeRoutes() {
-        $routes = rglob(__DIR__.DIRECTORY_SEPARATOR."types".DIRECTORY_SEPARATOR."Route.php");
-        foreach($routes as $route) {
-            require $route;
-        }
-    }
-
-
-
+        $this->app->singleton('crudboosterinstall',function() {
+            return new CrudboosterInstallationCommand;
+        });
+        
+        $this->app->singleton('crudboosterupdate',function() {
+            return new CrudboosterUpdateCommand;
+        });        
+    }    
 }
